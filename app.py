@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta  # Importing pandas_ta for technical indicators
 
 # Load stock list
 @st.cache_data
@@ -22,34 +21,28 @@ def get_stock_data(symbol):
         # Fundamental Factors
         earnings_surprise = info.get('earningsSurprise', np.nan)  # % Earnings Beat
         revenue_growth = info.get('revenueGrowth', np.nan)
-        pe_ratio = info.get('trailingPE', np.nan)  # P/E Ratio
-        pb_ratio = info.get('priceToBook', np.nan)  # P/B Ratio
-        debt_to_equity = info.get('debtToEquity', np.nan)  # Debt-to-Equity Ratio
-        dividend_yield = info.get('dividendYield', np.nan)  # Dividend Yield
         
         # Fetch historical price data (6 months)
         hist = stock.history(period="6mo")
         
         if not hist.empty:
-            # Technical Indicators
-            hist['EMA50'] = ta.ema(hist['Close'], length=50)
-            hist['EMA20'] = ta.ema(hist['Close'], length=20)
-            hist['EMA200'] = ta.ema(hist['Close'], length=200)
-            hist['RSI'] = ta.rsi(hist['Close'], length=14)
-            hist['MACD'], hist['MACD_Signal'], _ = ta.macd(hist['Close'])
+            # Technical Indicators (using yfinance directly)
+            hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
+            hist['RSI'] = 100 - (100 / (1 + (hist['Close'].diff().where(lambda x: x > 0, 0).rolling(window=14).mean() / 
+                                        hist['Close'].diff().where(lambda x: x < 0, 0).rolling(window=14).mean().abs())))
+            macd_short = hist['Close'].ewm(span=12, adjust=False).mean()
+            macd_long = hist['Close'].ewm(span=26, adjust=False).mean()
+            hist['MACD'] = macd_short - macd_long
+            hist['MACD_Signal'] = hist['MACD'].ewm(span=9, adjust=False).mean()
             hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
-            hist['BB_upper'], hist['BB_middle'], hist['BB_lower'] = ta.bbands(hist['Close'], length=20, std=2)
-            hist['StochK'], hist['StochD'] = ta.stoch(hist['High'], hist['Low'], hist['Close'], k=14, d=3)
-            hist['ATR'] = ta.atr(hist['High'], hist['Low'], hist['Close'], length=14)
-        
-        # Technical Factors (Signal Calculation)
-        price_above_ema50 = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
-        rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
-        macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
-        volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
-        price_above_ema20 = 1 if hist['Close'].iloc[-1] > hist['EMA20'].iloc[-1] else 0
-        bollinger_breakout = 1 if hist['Close'].iloc[-1] > hist['BB_upper'].iloc[-1] else 0
-        
+
+            price_above_ema50 = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
+            rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
+            macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
+            volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
+        else:
+            price_above_ema50 = rsi_positive = macd_crossover = volume_surge = np.nan
+
         # Next Earnings Date
         next_earnings_date = earnings.get('Earnings Date', [np.nan])[0]
 
@@ -57,16 +50,10 @@ def get_stock_data(symbol):
             "Symbol": symbol,
             "Earnings Surprise %": earnings_surprise if pd.notna(earnings_surprise) else 0,
             "Revenue Growth": revenue_growth if pd.notna(revenue_growth) else 0,
-            "P/E Ratio": pe_ratio if pd.notna(pe_ratio) else 0,
-            "P/B Ratio": pb_ratio if pd.notna(pb_ratio) else 0,
-            "Debt-to-Equity": debt_to_equity if pd.notna(debt_to_equity) else 0,
-            "Dividend Yield": dividend_yield if pd.notna(dividend_yield) else 0,
             "Price > EMA50": price_above_ema50,
             "RSI > 50": rsi_positive,
             "MACD Bullish": macd_crossover,
             "Volume Surge": volume_surge,
-            "Price > EMA20": price_above_ema20,
-            "Bollinger Band Breakout": bollinger_breakout,
             "Next Earnings Date": next_earnings_date
         }
     except Exception as e:
@@ -77,9 +64,9 @@ def calculate_stock_scores(df, risk_tolerance):
     df = df.dropna().reset_index(drop=True)
     
     # Assigning Scores
-    df["Fundamental Score"] = df["Earnings Surprise %"].rank(ascending=False) + df["Revenue Growth"].rank(ascending=False) + df["P/E Ratio"].rank(ascending=True) + df["P/B Ratio"].rank(ascending=True) + df["Debt-to-Equity"].rank(ascending=True)
-    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"] + df["Price > EMA20"] + df["Bollinger Band Breakout"]
-    
+    df["Fundamental Score"] = df["Earnings Surprise %"].rank(ascending=False) + df["Revenue Growth"].rank(ascending=False)
+    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"]
+
     # Calculate Breakout Probability %
     df["Breakout Probability %"] = ((df["Fundamental Score"] * 0.5) + (df["Technical Score"] * 0.5)) * 10
     
