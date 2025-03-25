@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+import pandas_ta as ta  # Importing pandas_ta for technical indicators
 
 # Load stock list
 @st.cache_data
@@ -11,7 +12,7 @@ def load_stocklist():
     sheets = xls.sheet_names  # Get sheet names
     return {sheet: pd.read_excel(xls, sheet_name=sheet)['Symbol'].dropna().tolist() for sheet in sheets}
 
-# Fetch stock data from yfinance
+# Fetch stock data from yfinance and calculate technical indicators
 def get_stock_data(symbol):
     try:
         stock = yf.Ticker(symbol)
@@ -22,15 +23,22 @@ def get_stock_data(symbol):
         earnings_surprise = info.get('earningsSurprise', np.nan)  # % Earnings Beat
         revenue_growth = info.get('revenueGrowth', np.nan)
         
-        # Technical Factors
+        # Fetch historical price data (6 months)
         hist = stock.history(period="6mo")
-        if not hist.empty:
-            price_above_sma = 1 if hist['Close'][-1] > hist['Close'].rolling(50).mean()[-1] else 0
-            rising_volume = 1 if hist['Volume'][-1] > hist['Volume'].rolling(20).mean()[-1] else 0
-        else:
-            price_above_sma = np.nan
-            rising_volume = np.nan
         
+        if not hist.empty:
+            hist['EMA50'] = ta.ema(hist['Close'], length=50)
+            hist['RSI'] = ta.rsi(hist['Close'], length=14)
+            hist['MACD'], hist['MACD_Signal'], _ = ta.macd(hist['Close'])
+            hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
+
+            price_above_ema = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
+            rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
+            macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
+            volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
+        else:
+            price_above_ema = rsi_positive = macd_crossover = volume_surge = np.nan
+
         # Next Earnings Date
         next_earnings_date = earnings.get('Earnings Date', [np.nan])[0]
 
@@ -38,8 +46,10 @@ def get_stock_data(symbol):
             "Symbol": symbol,
             "Earnings Surprise %": earnings_surprise if pd.notna(earnings_surprise) else 0,
             "Revenue Growth": revenue_growth if pd.notna(revenue_growth) else 0,
-            "Price > 50-day SMA": price_above_sma,
-            "Rising Volume": rising_volume,
+            "Price > EMA50": price_above_ema,
+            "RSI > 50": rsi_positive,
+            "MACD Bullish": macd_crossover,
+            "Volume Surge": volume_surge,
             "Next Earnings Date": next_earnings_date
         }
     except Exception as e:
@@ -51,10 +61,10 @@ def calculate_stock_scores(df, risk_tolerance):
     
     # Assigning Scores
     df["Fundamental Score"] = df["Earnings Surprise %"].rank(ascending=False) + df["Revenue Growth"].rank(ascending=False)
-    df["Technical Score"] = df["Price > 50-day SMA"] + df["Rising Volume"]
+    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"]
 
     # Calculate Breakout Probability %
-    df["Breakout Probability %"] = ((df["Fundamental Score"] * 0.6) + (df["Technical Score"] * 0.4)) * 10
+    df["Breakout Probability %"] = ((df["Fundamental Score"] * 0.5) + (df["Technical Score"] * 0.5)) * 10
     
     # Adjusting allocation based on risk tolerance
     if risk_tolerance == "Aggressive":
