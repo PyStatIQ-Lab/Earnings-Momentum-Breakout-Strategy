@@ -3,3 +3,6 @@ numpy
 yfinance
 openpyxl
 pandas
+matplotlib
+pandas
+pandas_ta
