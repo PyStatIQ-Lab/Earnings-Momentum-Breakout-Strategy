@@ -7,4 +7,3 @@ matplotlib
 pandas
 pandas_ta
 TA-Lib
-pkg_resources
