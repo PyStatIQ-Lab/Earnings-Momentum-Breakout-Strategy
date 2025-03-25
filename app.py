@@ -1,114 +1,54 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import yfinance as yf
-import pandas_ta as ta  # Importing pandas_ta for technical indicators
+import pandas as pd
+import ta  # Using 'ta' for technical indicators
 
 # Load stock list
 @st.cache_data
 def load_stocklist():
-    file_path = "stocklist.xlsx"
-    xls = pd.ExcelFile(file_path)
-    sheets = xls.sheet_names  # Get sheet names
-    return {sheet: pd.read_excel(xls, sheet_name=sheet)['Symbol'].dropna().tolist() for sheet in sheets}
+    xls = pd.ExcelFile("stocklist.xlsx")
+    return {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
 
-# Fetch stock data from yfinance and calculate technical indicators
+stock_data = load_stocklist()
+sheet_names = list(stock_data.keys())
+
+# User inputs
+st.title("Earnings Momentum + Breakout Strategy")
+st.sidebar.header("Stock Selection")
+selected_sheet = st.sidebar.selectbox("Select Stock List", sheet_names)
+st.sidebar.header("Strategy Settings")
+risk_tolerance = st.sidebar.slider("Risk Tolerance", 1, 10, 5)
+time_horizon = st.sidebar.radio("Time Horizon", ["Short-term", "Medium-term"])
+
+# Get stock symbols
+symbols = stock_data[selected_sheet]["Symbol"].dropna().tolist()
+
 def get_stock_data(symbol):
-    try:
-        stock = yf.Ticker(symbol)
-        info = stock.info
-        earnings = stock.calendar
-        
-        # Fundamental Factors
-        earnings_surprise = info.get('earningsSurprise', np.nan)  # % Earnings Beat
-        revenue_growth = info.get('revenueGrowth', np.nan)
-        
-        # Fetch historical price data (6 months)
-        hist = stock.history(period="6mo")
-        
-        if not hist.empty:
-            hist['EMA50'] = ta.ema(hist['Close'], length=50)
-            hist['RSI'] = ta.rsi(hist['Close'], length=14)
-            hist['MACD'], hist['MACD_Signal'], _ = ta.macd(hist['Close'])
-            hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
-
-            price_above_ema = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
-            rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
-            macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
-            volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
-        else:
-            price_above_ema = rsi_positive = macd_crossover = volume_surge = np.nan
-
-        # Next Earnings Date
-        next_earnings_date = earnings.get('Earnings Date', [np.nan])[0]
-
-        return {
-            "Symbol": symbol,
-            "Earnings Surprise %": earnings_surprise if pd.notna(earnings_surprise) else 0,
-            "Revenue Growth": revenue_growth if pd.notna(revenue_growth) else 0,
-            "Price > EMA50": price_above_ema,
-            "RSI > 50": rsi_positive,
-            "MACD Bullish": macd_crossover,
-            "Volume Surge": volume_surge,
-            "Next Earnings Date": next_earnings_date
-        }
-    except Exception as e:
+    df = yf.download(symbol, period="6mo", interval="1d")
+    if df.empty:
         return None
-
-# Rank stocks based on Earnings Momentum & Breakout Strategy
-def calculate_stock_scores(df, risk_tolerance):
-    df = df.dropna().reset_index(drop=True)
-    
-    # Assigning Scores
-    df["Fundamental Score"] = df["Earnings Surprise %"].rank(ascending=False) + df["Revenue Growth"].rank(ascending=False)
-    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"]
-
-    # Calculate Breakout Probability %
-    df["Breakout Probability %"] = ((df["Fundamental Score"] * 0.5) + (df["Technical Score"] * 0.5)) * 10
-    
-    # Adjusting allocation based on risk tolerance
-    if risk_tolerance == "Aggressive":
-        df["Position Size"] = df["Fundamental Score"] * 1.2 + df["Technical Score"] * 0.8
-    elif risk_tolerance == "Conservative":
-        df["Position Size"] = df["Fundamental Score"] * 0.8 + df["Technical Score"] * 1.2
-    else:
-        df["Position Size"] = df["Fundamental Score"] + df["Technical Score"]
-
-    df = df.sort_values(by="Breakout Probability %", ascending=False)
-    
+    df["50SMA"] = ta.trend.sma_indicator(df["Close"], window=50)
+    df["RSI"] = ta.momentum.rsi(df["Close"], window=14)
+    df["Volume Change"] = df["Volume"].pct_change()
     return df
 
-# Streamlit UI
-st.title("📊 Earnings Momentum + Breakout Strategy")
+st.subheader("🏆 Pre-Earnings Stock Picks")
+final_picks = []
 
-# Load stocklist
-stocklist = load_stocklist()
-sheet_selection = st.selectbox("Select Stock List", options=list(stocklist.keys()))
+for symbol in symbols:
+    df = get_stock_data(symbol)
+    if df is not None and len(df) > 50:
+        latest = df.iloc[-1]
+        
+        price_above_sma = latest["Close"] > latest["50SMA"]
+        rsi_positive = latest["RSI"] > 50
+        volume_surge = latest["Volume Change"] > 0.2
+        
+        if price_above_sma and rsi_positive and volume_surge:
+            probability = (price_above_sma * 0.4 + rsi_positive * 0.4 + volume_surge * 0.2) * 100
+            final_picks.append({"Symbol": symbol, "Probability": f"{probability:.2f}%"})
 
-# User Inputs
-risk_tolerance = st.radio("Select Risk Tolerance", ["Conservative", "Balanced", "Aggressive"], index=1)
-time_horizon = st.radio("Select Time Horizon", ["Hold until Earnings", "Hold 3M Post-Earnings"], index=0)
-
-# Fetch data for selected stocks
-symbols = stocklist[sheet_selection]
-st.write(f"Fetching data for {len(symbols)} stocks...")
-
-stock_data = [get_stock_data(symbol) for symbol in symbols]
-stock_df = pd.DataFrame([s for s in stock_data if s])
-
-# Check if data exists
-if not stock_df.empty:
-    filtered_df = calculate_stock_scores(stock_df, risk_tolerance)
-    
-    # Display top stock picks with Breakout Probability %
-    st.subheader("🏆 Pre-Earnings Stock Picks")
-    st.dataframe(filtered_df[["Symbol", "Next Earnings Date", "Breakout Probability %", "Position Size"]].head(10))
-    
-    # Entry & Exit Strategy
-    st.subheader("📈 Entry/Exit Points")
-    filtered_df["Entry Point"] = "Buy now (pre-earnings)"
-    filtered_df["Exit Point"] = "Sell after earnings" if time_horizon == "Hold until Earnings" else "Hold 3 months"
-    st.dataframe(filtered_df[["Symbol", "Breakout Probability %", "Entry Point", "Exit Point"]].head(10))
-
+if final_picks:
+    st.table(pd.DataFrame(final_picks))
 else:
-    st.warning("No stock data found. Try selecting another sheet or check stock symbols.")
+    st.write("No stocks meet the criteria.")
