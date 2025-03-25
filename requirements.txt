@@ -2,5 +2,5 @@ streamlit
 numpy
 yfinance
 openpyxl
-talib
+ta-lib
 pandas
