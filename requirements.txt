@@ -3,4 +3,4 @@ numpy
 yfinance
 openpyxl
 pandas
-ta-lib
+ta
