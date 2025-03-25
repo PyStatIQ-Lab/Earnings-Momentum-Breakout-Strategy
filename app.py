@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import pandas_ta as ta  # Importing pandas_ta for technical indicators
+import talib as ta  # Importing TA-Lib for technical indicators
 
 # Load stock list
 @st.cache_data
@@ -27,16 +27,16 @@ def get_stock_data(symbol):
         hist = stock.history(period="6mo")
         
         if not hist.empty:
-            # Calculate technical indicators using pandas_ta
-            hist['EMA50'] = ta.ema(hist['Close'], length=50)
-            hist['RSI'] = ta.rsi(hist['Close'], length=14)
-            hist['MACD'], hist['MACD_Signal'], _ = ta.macd(hist['Close'])
+            # Calculate technical indicators using TA-Lib
+            hist['EMA50'] = ta.EMA(hist['Close'], timeperiod=50)
+            hist['RSI'] = ta.RSI(hist['Close'], timeperiod=14)
+            hist['MACD'], hist['MACD_Signal'], _ = ta.MACD(hist['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
             hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
             
             # Additional technical indicators you may want to include:
-            hist['SMA200'] = ta.sma(hist['Close'], length=200)  # 200-day Simple Moving Average
-            hist['Stochastic'] = ta.stoch(hist['High'], hist['Low'], hist['Close'], fast_k=14, fast_d=3)  # Stochastic Oscillator
-            hist['Bollinger_Upper'], hist['Bollinger_Lower'] = ta.bbands(hist['Close'], length=20, std=2)  # Bollinger Bands
+            hist['SMA200'] = ta.SMA(hist['Close'], timeperiod=200)  # 200-day Simple Moving Average
+            hist['STOCH_K'], hist['STOCH_D'] = ta.STOCH(hist['High'], hist['Low'], hist['Close'], fastk_period=14, slowk_period=3, slowd_period=3)  # Stochastic Oscillator
+            hist['Bollinger_Upper'], hist['Bollinger_Middle'], hist['Bollinger_Lower'] = ta.BBANDS(hist['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)  # Bollinger Bands
             
             # Technical analysis conditions
             price_above_ema = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
@@ -44,7 +44,7 @@ def get_stock_data(symbol):
             macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
             volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
             price_above_sma200 = 1 if hist['Close'].iloc[-1] > hist['SMA200'].iloc[-1] else 0  # Additional condition for SMA200
-            stochastic_overbought = 1 if hist['Stochastic'].iloc[-1] > 80 else 0  # Additional condition for Stochastic overbought
+            stochastic_overbought = 1 if hist['STOCH_K'].iloc[-1] > 80 else 0  # Additional condition for Stochastic overbought
             bollinger_breakout = 1 if hist['Close'].iloc[-1] > hist['Bollinger_Upper'].iloc[-1] else 0  # Breakout from upper Bollinger Band
         else:
             price_above_ema = rsi_positive = macd_crossover = volume_surge = price_above_sma200 = stochastic_overbought = bollinger_breakout = np.nan
