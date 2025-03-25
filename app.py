@@ -26,22 +26,34 @@ def get_stock_data(symbol):
         hist = stock.history(period="6mo")
         
         if not hist.empty:
-            # Technical Indicators (using yfinance directly)
+            # Calculate technical indicators manually
+            
+            # EMA50 (Exponential Moving Average)
             hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
-            hist['RSI'] = 100 - (100 / (1 + (hist['Close'].diff().where(lambda x: x > 0, 0).rolling(window=14).mean() / 
-                                        hist['Close'].diff().where(lambda x: x < 0, 0).rolling(window=14).mean().abs())))
-            macd_short = hist['Close'].ewm(span=12, adjust=False).mean()
-            macd_long = hist['Close'].ewm(span=26, adjust=False).mean()
-            hist['MACD'] = macd_short - macd_long
+            
+            # RSI (Relative Strength Index)
+            delta = hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            hist['RSI'] = 100 - (100 / (1 + rs))
+            
+            # MACD (Moving Average Convergence Divergence)
+            fast_ema = hist['Close'].ewm(span=12, adjust=False).mean()
+            slow_ema = hist['Close'].ewm(span=26, adjust=False).mean()
+            hist['MACD'] = fast_ema - slow_ema
             hist['MACD_Signal'] = hist['MACD'].ewm(span=9, adjust=False).mean()
+            
+            # Volume Surge (compared to the 20-day moving average volume)
             hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
-
-            price_above_ema50 = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
+            
+            # Calculate technical conditions
+            price_above_ema = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
             rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
             macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
             volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
         else:
-            price_above_ema50 = rsi_positive = macd_crossover = volume_surge = np.nan
+            price_above_ema = rsi_positive = macd_crossover = volume_surge = np.nan
 
         # Next Earnings Date
         next_earnings_date = earnings.get('Earnings Date', [np.nan])[0]
@@ -50,7 +62,7 @@ def get_stock_data(symbol):
             "Symbol": symbol,
             "Earnings Surprise %": earnings_surprise if pd.notna(earnings_surprise) else 0,
             "Revenue Growth": revenue_growth if pd.notna(revenue_growth) else 0,
-            "Price > EMA50": price_above_ema50,
+            "Price > EMA50": price_above_ema,
             "RSI > 50": rsi_positive,
             "MACD Bullish": macd_crossover,
             "Volume Surge": volume_surge,
