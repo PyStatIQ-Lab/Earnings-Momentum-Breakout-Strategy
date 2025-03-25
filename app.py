@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import talib as ta  # Importing TA-Lib for technical indicators
 
 # Load stock list
 @st.cache_data
@@ -27,27 +26,34 @@ def get_stock_data(symbol):
         hist = stock.history(period="6mo")
         
         if not hist.empty:
-            # Calculate technical indicators using TA-Lib
-            hist['EMA50'] = ta.EMA(hist['Close'], timeperiod=50)
-            hist['RSI'] = ta.RSI(hist['Close'], timeperiod=14)
-            hist['MACD'], hist['MACD_Signal'], _ = ta.MACD(hist['Close'], fastperiod=12, slowperiod=26, signalperiod=9)
+            # Calculate technical indicators manually
+            
+            # EMA50 (Exponential Moving Average)
+            hist['EMA50'] = hist['Close'].ewm(span=50, adjust=False).mean()
+            
+            # RSI (Relative Strength Index)
+            delta = hist['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            hist['RSI'] = 100 - (100 / (1 + rs))
+            
+            # MACD (Moving Average Convergence Divergence)
+            fast_ema = hist['Close'].ewm(span=12, adjust=False).mean()
+            slow_ema = hist['Close'].ewm(span=26, adjust=False).mean()
+            hist['MACD'] = fast_ema - slow_ema
+            hist['MACD_Signal'] = hist['MACD'].ewm(span=9, adjust=False).mean()
+            
+            # Volume Surge (compared to the 20-day moving average volume)
             hist['Volume Surge'] = hist['Volume'] / hist['Volume'].rolling(20).mean()
             
-            # Additional technical indicators you may want to include:
-            hist['SMA200'] = ta.SMA(hist['Close'], timeperiod=200)  # 200-day Simple Moving Average
-            hist['STOCH_K'], hist['STOCH_D'] = ta.STOCH(hist['High'], hist['Low'], hist['Close'], fastk_period=14, slowk_period=3, slowd_period=3)  # Stochastic Oscillator
-            hist['Bollinger_Upper'], hist['Bollinger_Middle'], hist['Bollinger_Lower'] = ta.BBANDS(hist['Close'], timeperiod=20, nbdevup=2, nbdevdn=2, matype=0)  # Bollinger Bands
-            
-            # Technical analysis conditions
+            # Calculate technical conditions
             price_above_ema = 1 if hist['Close'].iloc[-1] > hist['EMA50'].iloc[-1] else 0
             rsi_positive = 1 if hist['RSI'].iloc[-1] > 50 else 0
             macd_crossover = 1 if hist['MACD'].iloc[-1] > hist['MACD_Signal'].iloc[-1] else 0
             volume_surge = 1 if hist['Volume Surge'].iloc[-1] > 1.5 else 0
-            price_above_sma200 = 1 if hist['Close'].iloc[-1] > hist['SMA200'].iloc[-1] else 0  # Additional condition for SMA200
-            stochastic_overbought = 1 if hist['STOCH_K'].iloc[-1] > 80 else 0  # Additional condition for Stochastic overbought
-            bollinger_breakout = 1 if hist['Close'].iloc[-1] > hist['Bollinger_Upper'].iloc[-1] else 0  # Breakout from upper Bollinger Band
         else:
-            price_above_ema = rsi_positive = macd_crossover = volume_surge = price_above_sma200 = stochastic_overbought = bollinger_breakout = np.nan
+            price_above_ema = rsi_positive = macd_crossover = volume_surge = np.nan
 
         # Next Earnings Date
         next_earnings_date = earnings.get('Earnings Date', [np.nan])[0]
@@ -60,9 +66,6 @@ def get_stock_data(symbol):
             "RSI > 50": rsi_positive,
             "MACD Bullish": macd_crossover,
             "Volume Surge": volume_surge,
-            "Price > SMA200": price_above_sma200,  # Added SMA200 condition
-            "Stochastic Overbought": stochastic_overbought,  # Added Stochastic condition
-            "Bollinger Breakout": bollinger_breakout,  # Added Bollinger Bands breakout condition
             "Next Earnings Date": next_earnings_date
         }
     except Exception as e:
@@ -74,7 +77,7 @@ def calculate_stock_scores(df, risk_tolerance):
     
     # Assigning Scores
     df["Fundamental Score"] = df["Earnings Surprise %"].rank(ascending=False) + df["Revenue Growth"].rank(ascending=False)
-    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"] + df["Price > SMA200"] + df["Stochastic Overbought"] + df["Bollinger Breakout"]
+    df["Technical Score"] = df["Price > EMA50"] + df["RSI > 50"] + df["MACD Bullish"] + df["Volume Surge"]
 
     # Calculate Breakout Probability %
     df["Breakout Probability %"] = ((df["Fundamental Score"] * 0.5) + (df["Technical Score"] * 0.5)) * 10
