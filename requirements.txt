@@ -3,3 +3,4 @@ numpy
 yfinance
 openpyxl
 pandas_ta
+pkg_resources
