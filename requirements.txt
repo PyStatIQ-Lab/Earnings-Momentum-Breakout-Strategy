@@ -2,4 +2,5 @@ streamlit
 numpy
 yfinance
 openpyxl
-pandas_ta
+TA-Lib
+pandas
