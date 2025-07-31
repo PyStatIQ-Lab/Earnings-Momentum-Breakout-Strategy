@@ -95,7 +95,7 @@ def calculate_stock_scores(df, risk_tolerance):
     return df
 
 # Streamlit UI
-st.title("📊 Earnings Momentum + Breakout Strategy")
+st.title("📊 Earnings Momentum + Breakout Strategyo")
 
 # Load stocklist
 stocklist = load_stocklist()
